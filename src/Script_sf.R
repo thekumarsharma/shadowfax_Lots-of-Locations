@@ -4,7 +4,7 @@ library(dplyr)
 library(data.table)
 library(geosphere)
 
-setwd("C:/Data/shadowfax/src")
+setwd("C:/Users/i076144/shadowfax_Lots-of-Locations/src")
 
 #Reading the input Files
 rider_loc = fread("../input/rider_location.csv") #173620 Records
@@ -35,9 +35,8 @@ unique(order$s_day)
 
 apply(order, 2, function(x) {length(unique(x))}) #Unique Values in Each Column
 
-#options(dplyr.print_min = 70)
-#group_by(order,seller_id) %>% summarise(length(unique(pickup_latitude)))
-group_by(order,pickup_latitude) %>% summarise(diff_seller = length(unique(seller_id))) %>% filter(diff_seller > 1) #There are two Pickup lattitude that have two seller
+#There are two Pickup lattitude that have two seller
+group_by(order,pickup_latitude) %>% summarise(diff_seller = length(unique(seller_id))) %>% filter(diff_seller > 1) 
 
 #Trend of Orders hourly basis
 with(group_by(order,s_hour) %>% summarise(tot_orders = length(order_id)),qplot(s_hour,tot_orders,geom = "line",main = "Trend of Orders hourly basis"))
@@ -46,17 +45,29 @@ with(group_by(order,s_hour) %>% summarise(tot_orders = length(order_id)),qplot(s
 with(group_by(order[!is.na(order$del_mintues),],s_hour) %>% summarise(avg_del_minutes = mean(del_mintues)),
      qplot(s_hour,avg_del_minutes,geom = "line",main= "Trend of Average Delivery time hourly basis"))
 
+#Reason Why there was so much delivery Times
+order[order$s_hour <= 5,]
+
+#Group By Order Id
 grp_rider = group_by(order[!is.na(order$del_mintues),],rider_id) %>% summarise(tot_orders = length(order_id),avg_del_minutes = mean(del_mintues))
 
 with(grp_rider,qplot(rider_id,tot_orders,geom = "point",main = "Total Orders by Riders"))
 
+#Riders Which has deliver more than Order
+grp_rider[grp_rider$tot_orders > 30,]
+
+
 with(grp_rider,qplot(rider_id,avg_del_minutes,geom = "point",main = "Riders average Delivery Times in Minutes"))
 
- 
+
 #There are some problem with some seller and Riders, product delivered before scheduled
 order[order$del_mintues < 0,]
-with(group_by(order[order$del_mintues > 0,],rider_id) %>% summarise(tot_orders = length(order_id),avg_del_minutes = mean(del_mintues)),
-     qplot(rider_id,avg_del_minutes,main= "Riders average Delivery Times in Minutes"))
+rider_avg = group_by(order[order$del_mintues > 0,],rider_id) %>% summarise(tot_orders = length(order_id),avg_del_minutes = mean(del_mintues))
+
+qplot(data = rider_avg,rider_id,avg_del_minutes,main= "Riders average Delivery Times in Minutes")
+
+#Users who have Avg deliver Time more than 50 minutes
+arrange(rider_avg[rider_avg$avg_del_minutes > 50,],desc(avg_del_minutes))
 
 
 #Creating Group by Seller Id
@@ -125,10 +136,8 @@ rider_loc = rider_loc[rider_loc$day %in% c(3,4,5),] #Keeping only 3,4,5 th day R
 source("preprocess.R")
 #Computation already done so no need to call
 #computeAddColums()
-rider_loc = fread("../input/mod_rider_loc.csv")
-tail(rider_loc)
+rider_loc = fread("../input/mod_rider_loc.csv") #Reading already Modified and process data for Rider location
 
-tail(unique(rider_loc$rider_id))
 v_lines <- points_to_line(data = rider_loc[rider_loc$rider_id %in% tail(unique(rider_loc$rider_id),2),], 
                           long = "longitude", 
                           lat = "latitude", 
@@ -140,11 +149,14 @@ leaflet(data = v_lines) %>%
   addTiles() %>%
   addPolylines()
 
-rider_loc$travel_with_order = ifelse(rider_loc$order_id < 0,0,1)
-rider_travel_dist = group_by(rider_loc, rider_id,day,travel_with_order) %>% summarise(tot_dist_travel = sum(distTravel)/1000 )
-arrange(rider_travel_dist,tot_dist_travel)
+rider_loc$travel_with_order = ifelse(rider_loc$order_id < 0,0,1) #Extra column to define whether hea order while traveling or not
 
-select(rider_travel_dist[rider_travel_dist$travel_with_order == 1],rider_id)
+#Calculating Travel distance by Rider, and Whether he travel with order or not
+rider_travel_dist = group_by(rider_loc, rider_id,travel_with_order) %>% summarise(tot_dist_travel = sum(distTravel)/1000 )
+
+arrange(rider_travel_dist[rider_travel_dist$travel_with_order == 1],desc(tot_dist_travel)) #Travel with Having Order
+arrange(rider_travel_dist[rider_travel_dist$travel_with_order == 0],desc(tot_dist_travel)) #Travel without Having Order
+
 ggplot(rider_travel_dist, aes(rider_id,tot_dist_travel)) +
   geom_point()
 
@@ -152,7 +164,9 @@ ggplot(rider_travel_dist, aes(rider_id,tot_dist_travel)) +
 rider_travel_dist[rider_travel_dist$tot_dist_travel > 500,]
 
 high_travel_user = rider_loc[rider_loc$rider_id %in% rider_travel_dist[rider_travel_dist$tot_dist_travel > 500,],]
-high_travel_user
+high_travel_user #Detail for the User Who travell very much
+
+order[order$rider_id == c(unique(high_travel_user$rider_id))] #User has only delivered only one Product and travel too much
 
 #User Traveling More
 leaflet(high_travel_user) %>%
@@ -162,11 +176,30 @@ leaflet(high_travel_user) %>%
 ggplot(rider_travel_dist[rider_travel_dist$tot_dist_travel < 500,], aes(rider_id,tot_dist_travel)) +
   geom_point() + ggtitle("Distance Travle by Riders")
 
+#With Day
+rider_travel_dist_day = group_by(rider_loc, rider_id,travel_with_order,day) %>% summarise(tot_dist_travel = sum(distTravel)/1000 )
+head(rider_travel_dist_day)
 #Plot Dist Travle Day wise  
-group_by(rider_travel_dist[rider_travel_dist$tot_dist_travel < 500,],day) %>% summarise(tot_travel = sum(tot_dist_travel)) %>%
+group_by(rider_travel_dist_day[rider_travel_dist$tot_dist_travel < 500,],day) %>% summarise(tot_travel = sum(tot_dist_travel)) %>%
   ggplot(aes(day,tot_travel)) +
-geom_point() + ggtitle("Distance Travle Daily by all riders")
+  geom_point() + ggtitle("Distance Travle Daily by all riders")
 
+#Identifying Good/Efficient Drivers and Bad/In-Efficient Drivers
+group_by(rider_travel_dist,travel_with_order) %>% summarise(tot_dist_travel)
+with_order = rider_travel_dist[rider_travel_dist$travel_with_order ==1,] %>% select(rider_id,tot_dist_travel)
+without_order = rider_travel_dist[rider_travel_dist$travel_with_order ==0,] %>% select(rider_id,tot_dist_travel)
 
-rmarkdown::render("script.R")
-rmarkdown::render("script.R", "pdf_document")
+comb_mat = merge(with_order,without_order,by = c("rider_id") )
+
+comb_mat$overdrive =comb_mat$tot_dist_travel.y/comb_mat$tot_dist_travel.x
+comb_mat=comb_mat[comb_mat$overdrive <500,]
+
+qplot(data= comb_mat,rider_id,overdrive, main="Drive Without order per Rider")
+comb_mat[comb_mat$overdrive > 50,] #Rider who Overdrive more than 50 KM
+
+#Details For these Driver
+rider_details = merge(comb_mat[comb_mat$overdrive > 50,],grp_rider, by =c("rider_id"),all.x = TRUE)
+rider_details
+
+#rmarkdown::render("Script_sf.R")
+#rmarkdown::render("script_sf.R", "pdf_document")
